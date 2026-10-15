@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>出席番号くじ</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@500;700;900&display=swap">
+<style>
+:root{--bg:#f7f5ef;--panel:#fff;--ink:#1f2a44;--sub:#5d6680;--line:#d9d6ca;--accent:#f2b705;--on-accent:#1f2a44;--ok:#1f2a44;--on-ok:#fff;
+box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#141a2b;--panel:#1d2540;--ink:#f3f1e8;--sub:#a3abc4;--line:#343e60;--accent:#f2b705;--on-accent:#1f2a44;--ok:#f3f1e8;--on-ok:#1f2a44}}
+:root[data-theme="dark"]{--bg:#141a2b;--panel:#1d2540;--ink:#f3f1e8;--sub:#a3abc4;--line:#343e60;--accent:#f2b705;--on-accent:#1f2a44;--ok:#f3f1e8;--on-ok:#1f2a44}
+*{box-sizing:border-box}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:"Zen Maru Gothic","Hiragino Maru Gothic ProN","Yu Gothic",sans-serif;font-weight:500;line-height:1.6}
+main{max-width:720px;margin:0 auto;padding:20px 16px 40px;display:grid;gap:16px}
+h1{font-size:1.3rem;margin:4px 0 0;font-weight:900}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px}
+label{display:block;font-weight:700;margin-bottom:6px}
+.row{display:flex;gap:8px;flex-wrap:wrap}
+input[type=text]{flex:1;min-width:180px;font:inherit;font-size:1.1rem;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:var(--bg);color:var(--ink)}
+button{font:inherit;font-weight:700;border:0;border-radius:10px;padding:12px 20px;cursor:pointer;background:var(--ok);color:var(--on-ok)}
+button.ghost{background:transparent;color:var(--ink);border:1px solid var(--line)}
+button:disabled{opacity:.35;cursor:not-allowed}
+:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
+.hint{color:var(--sub);font-size:.9rem;margin:6px 0 0}
+.err{color:#c0392b;font-weight:700;margin:6px 0 0;min-height:1.4em}
+.stage{text-align:center;padding:28px 12px}
+.num{font-weight:900;font-size:clamp(6rem,34vw,13rem);line-height:1;letter-spacing:-.02em;min-height:1em;font-variant-numeric:tabular-nums}
+.num.empty{color:var(--line)}
+.num.final{animation:pop .35s ease-out}
+@keyframes pop{from{transform:scale(.85)}to{transform:scale(1)}}
+@media (prefers-reduced-motion:reduce){.num.final{animation:none}}
+.draw{background:var(--accent);color:var(--on-accent);font-size:1.4rem;padding:16px 40px;border-radius:14px}
+.choice{margin-top:18px}
+.choice p{margin:0 0 10px;font-weight:700}
+.choice .row{justify-content:center}
+.status{color:var(--sub);margin:14px 0 0}
+.hist{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0 0;padding:0;list-style:none}
+.hist li{min-width:2.4em;text-align:center;padding:4px 10px;border-radius:999px;border:1px solid var(--line);font-weight:700}
+.hist li.back{border-style:dashed;color:var(--sub)}
+.legend{color:var(--sub);font-size:.85rem;margin:8px 0 0}
+</style>
+</head>
+<body>
+<main>
+  <h1>出席番号くじ</h1>
+
+  <section class="card">
+    <label for="range">箱に入れる出席番号</label>
+    <div class="row">
+      <input id="range" type="text" value="1-40" inputmode="text" autocomplete="off">
+      <button id="set" type="button">箱を用意する</button>
+    </div>
+    <p class="hint">例：1-40　または　1-18, 20, 22-35（欠席の番号は除いて入力）</p>
+    <p class="err" id="err" role="alert"></p>
+  </section>
+
+  <section class="card stage" aria-live="polite">
+    <div class="num empty" id="num">?</div>
+    <p class="status" id="status">箱の中：0枚</p>
+    <div style="margin-top:16px"><button id="draw" class="draw" type="button" disabled>ひく</button></div>
+    <div class="choice" id="choice" hidden>
+      <p>この番号を箱に戻しますか？</p>
+      <div class="row">
+        <button id="back" type="button">箱に戻す</button>
+        <button id="keep" type="button" class="ghost">戻さない</button>
+      </div>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="row" style="justify-content:space-between;align-items:center">
+      <strong>ひいた番号</strong>
+      <button id="reset" type="button" class="ghost">最初からやり直す</button>
+    </div>
+    <ul class="hist" id="hist"></ul>
+    <p class="legend">実線＝戻さなかった番号　点線＝箱に戻した番号</p>
+  </section>
+</main>
+
+<script>
+(function(){
+  var $=function(id){return document.getElementById(id)};
+  var all=[],box=[],pending=null,history=[],busy=false;
+  var reduce=window.matchMedia&&matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  function norm(s){return s.replace(/[０-９]/g,function(c){return String.fromCharCode(c.charCodeAt(0)-65248)}).replace(/[－ー―~〜～]/g,'-')}
+
+  function parse(text){
+    var set={},parts=norm(text).split(/[,、，\s]+/).filter(Boolean);
+    for(var i=0;i<parts.length;i++){
+      var m=parts[i].match(/^(\d+)-(\d+)$/),a,b;
+      if(m){a=+m[1];b=+m[2];if(a>b){var t=a;a=b;b=t}}
+      else if(/^\d+$/.test(parts[i])){a=b=+parts[i]}
+      else return {error:'「'+parts[i]+'」は読み取れません。数字・カンマ・ハイフンで入力してください。'};
+      if(b>999)return {error:'999より大きい番号は使えません。'};
+      for(var n=a;n<=b;n++)set[n]=1;
+    }
+    var list=Object.keys(set).map(Number).sort(function(x,y){return x-y});
+    if(!list.length)return {error:'出席番号を1つ以上入力してください。'};
+    return {list:list};
+  }
+
+  function render(){
+    $('status').textContent=box.length?'箱の中：'+box.length+'枚':(all.length?'箱は空です':'箱の中：0枚');
+    $('draw').disabled=busy||pending!==null||box.length===0;
+    $('choice').hidden=pending===null;
+    $('hist').innerHTML=history.map(function(h){return '<li class="'+(h.back?'back':'')+'">'+h.n+'</li>'}).join('');
+  }
+
+  function setBox(){
+    var r=parse($('range').value);
+    if(r.error){$('err').textContent=r.error;return}
+    $('err').textContent='';
+    all=r.list;box=all.slice();pending=null;history=[];
+    $('num').textContent='?';$('num').className='num empty';
+    render();$('draw').focus();
+  }
+
+  function draw(){
+    if(busy||pending!==null||!box.length)return;
+    busy=true;render();
+    var idx=Math.floor(Math.random()*box.length),n=box[idx];
+    var el=$('num');el.className='num';
+    function finish(){
+      el.textContent=n;el.className='num final';
+      pending=n;busy=false;render();$('back').focus();
+    }
+    if(reduce){finish();return}
+    var ticks=0,iv=setInterval(function(){
+      el.textContent=box[Math.floor(Math.random()*box.length)];
+      if(++ticks>=14){clearInterval(iv);finish()}
+    },60);
+  }
+
+  function decide(returnIt){
+    if(pending===null)return;
+    var n=pending,i=box.indexOf(n);
+    if(!returnIt&&i>-1)box.splice(i,1);
+    history.push({n:n,back:returnIt});
+    pending=null;render();
+    if(!box.length){$('status').textContent='全員ひき終わりました。'}
+    else $('draw').focus();
+  }
+
+  $('set').onclick=setBox;
+  $('range').onkeydown=function(e){if(e.key==='Enter')setBox()};
+  $('draw').onclick=draw;
+  $('back').onclick=function(){decide(true)};
+  $('keep').onclick=function(){decide(false)};
+  $('reset').onclick=setBox;
+  setBox();
+})();
+</script>
+</body>
+</html>
